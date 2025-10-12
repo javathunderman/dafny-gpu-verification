@@ -1,0 +1,9 @@
+_minted/
+*.aux
+*.bbl
+*.blg
+*.fdb*
+*.fls
+*.log
+*.out
+*.gz
