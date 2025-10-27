@@ -30,14 +30,20 @@ class TicketSystem {
             cs := cs[p := Hungry];
     }
 
-    method Enter(p: Process) 
-        requires Valid() && p in P && cs[p] == Hungry
+    method Enter0(p: Process) 
+        requires Valid() && p in P && cs[p] == Hungry && t[p] == serving
         modifies this
         ensures Valid() {
-            if t[p] == serving {
-                cs := cs[p := Eating];
-            }
+            cs := cs[p := Eating];
     }
+
+    method Enter1(p: Process) 
+        requires Valid() && p in P && cs[p] == Hungry && t[p] != serving
+        modifies this
+        ensures Valid() 
+        {
+        }
+
     method Leave(p: Process)
         requires Valid() && p in P && cs[p] == Eating
         modifies this
@@ -53,7 +59,23 @@ class TicketSystem {
     {
     }
 
-
+    method Run(processes: set<Process>)
+    requires processes != {}
+    // ensures P == processes
+    decreases * // omit the termination checks since this method has a loop that never ends
+    {
+        var ts := new TicketSystem(processes);
+        while exists p :: p in ts.P && (ts.cs[p] == Hungry ==> ts.t[p] == ts.serving)
+            invariant ts.Valid()
+            decreases * {
+                var p :| p in ts.P && (ts.cs[p] == Hungry ==> ts.t[p] == ts.serving);
+                match ts.cs[p] {
+                    case Thinking => ts.Request(p);
+                    case Hungry => ts.Enter0(p);
+                    case Eating => ts.Leave(p);
+                }
+        }
+    }
 }
 
     
