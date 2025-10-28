@@ -2,8 +2,8 @@ class ProgramState {
     const b_dim : int
     const g_dim : int
     var blocks : seq<seq<set<int>>>
-    ghost predicate Valid() reads this { // not sure if there is some danger in saying it's spec-only/a ghost predicate
-        forall i :: 0 <= i < |blocks| ==> |blocks[i]| == |blocks[0]|
+    predicate Valid() reads this {
+        forall i :: 0 <= i < |blocks| ==> |blocks[i]| == |blocks[0]| // says all of the block sizes should be the same
     }
 
     constructor (b_dim: int, g_dim: int, acc: set<int>) ensures Valid() requires b_dim >= 0 requires g_dim >= 0 {
