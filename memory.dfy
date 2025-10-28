@@ -1,28 +1,22 @@
-datatype Block = Block(ind: int, dim: int)
-datatype Thread = Thread(ind: int, blk: Block)
-
 class ProgramState {
-    const blocks : set<Block>
-    const threads: set<Thread>
-    var acc: map<Thread, set<int>>
-
+    const b_dim : int
+    const g_dim : int
+    var blocks : seq<seq<set<int>>>
     ghost predicate Valid() reads this { // not sure if there is some danger in saying it's spec-only/a ghost predicate
-        
-        (forall p, q :: p in blocks && q in blocks && p.dim == q.dim)  && // blocks must have the same dimensions
-        (forall p, q :: p in blocks && q in blocks && p.ind != q.ind) && // cannot have the same index
-        (forall p, q :: p in threads && q in threads && p.ind != q.ind) && // cannot have threads with the same index
-        (forall p :: p in threads && p.ind < p.blk.dim)
+        forall i :: 0 <= i < |blocks| ==> |blocks[i]| == |blocks[0]|
     }
 
-    constructor (blks: set<Block>, th: set<Thread>, a: map<Thread, set<int>>) ensures Valid() {
-        blocks := blks;
-        threads := th;
-        acc := a;
+    constructor (b_dim: int, g_dim: int, acc: set<int>) ensures Valid() requires b_dim >= 0 requires g_dim >= 0 {
+        this.b_dim := b_dim;
+        this.g_dim := g_dim;
+        blocks := seq (g_dim, i => seq(b_dim, j => acc));
     }
 
-    lemma ValidMemAccess(p: Thread)
-        requires Valid() && p in threads
-        ensures (forall k :: k in acc[p] && k < p.blk.dim && k >= 0)
+    lemma ValidMemAccess()
+        requires Valid()
+        ensures (forall b :: 0 <= b < |blocks| ==> 
+                    (forall k :: 0 <= k < |blocks[b]| ==> 
+                        (forall m :: m in blocks[b][k] && m >= 0 && m < b_dim)))
         {
         }
 }
