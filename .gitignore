@@ -10,3 +10,4 @@ _minted/
 *.mdb
 *.dll
 *.cs*
+*.vscode/
