@@ -15,7 +15,7 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 __global__ void matMulKernel(float* A, float* B, float* C, int n) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
-    // @requires (row * n + k) <= n^2
+    /** requires (row * n + k) <= n^2 */
     if (row < n && col < n) {
         float sum = 0.0f;
         for (int k = 0; k < n; k++) {
