@@ -13,10 +13,12 @@
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/CommandLine.h"
 #include "clang/AST/RawCommentList.h"
-
+#include "../include/dafny.hpp"
 using namespace clang;
 using namespace clang::tooling;
 static llvm::cl::OptionCategory MyToolCategory("my-tool options");
+// using ExprVariant = std::variant<clang::ImplicitCastExpr*, clang::BinaryOperator*>;
+std::unordered_map<std::string, std::string> ind_constraints;
 
 class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
  public:
@@ -62,24 +64,37 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
         Expr *baseExpr = arrSubExpr->getBase();
         if (kernel_map[curr_func->getNameInfo().getName().getAsString()]) {
             if (clang::ImplicitCastExpr *baseExprI = llvm::dyn_cast<clang::ImplicitCastExpr>(baseExpr)) {
-                baseExprI->getSubExprAsWritten()->printPretty(llvm::outs(),
-                                nullptr,
-                                context->getPrintingPolicy());
+                // baseExprI->getSubExprAsWritten()->printPretty(llvm::outs(),
+                //                 nullptr,
+                //                 context->getPrintingPolicy());
                 // llvm::outs() << "\n" << baseExprI->getSubExprAsWritten()->getStmtClassName() << "\nAttempt to print the parent, then indexExpr\n";
+                SourceRange range_base = baseExprI->getSubExprAsWritten()->getSourceRange();
+                SourceManager &SM = context->getSourceManager();
+                llvm::StringRef base_text_ref = Lexer::getSourceText(CharSourceRange::getTokenRange(range_base), SM, context->getLangOpts());
+                std::string base_text(base_text_ref.begin(), base_text_ref.end());
                 if (clang::ImplicitCastExpr *indexExprI = llvm::dyn_cast<clang::ImplicitCastExpr>(indexExpr)) {
                     #ifdef DEBUG_ARR_SUBSCRIPT
                     llvm::outs()<< "Implicit cast expr for array subscript\n";
                     #endif
-                    indexExprI->getSubExprAsWritten()->printPretty(llvm::outs(),
-                                nullptr,
-                                context->getPrintingPolicy());
+                    // indexExprI->getSubExprAsWritten()->printPretty(llvm::outs(),
+                    //             nullptr,
+                    //             context->getPrintingPolicy());
+                    SourceRange range_ind = indexExprI->getSubExprAsWritten()->getSourceRange();
+                    llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range_ind), SM, context->getLangOpts());
+                    std::string stdStr(text.begin(), text.end());
+                    ind_constraints[base_text] = stdStr;
+
                 } else if (clang::BinaryOperator *indexExprB = llvm::dyn_cast<clang::BinaryOperator>(indexExpr)) {
                     #ifdef DEBUG_ARR_SUBSCRIPT
                     llvm::outs()<< "BinOp for array subscript\n";
                     #endif
-                    indexExprB->printPretty(llvm::outs(),
-                                nullptr,
-                                context->getPrintingPolicy());
+                    // indexExprB->printPretty(llvm::outs(),
+                    //             nullptr,
+                    //             context->getPrintingPolicy());
+                    SourceRange range_ind = indexExprB->getSourceRange();
+                    llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range_ind), SM, context->getLangOpts());
+                    std::string stdStr(text.begin(), text.end());
+                    ind_constraints[base_text] = stdStr;
                 }
                 llvm::outs() << "\n";
             }
@@ -180,6 +195,13 @@ int main(int argc, const char **argv) {
 
   AssertionFrontendAction action;
   tool.run(newFrontendActionFactory<AssertionFrontendAction>().get());
-
+  std::string dafnyCode = readFile("test_matmul.dfy");
+  std::string modifiedCode = dafnyCode;
+  for (const auto& pair : ind_constraints) {
+        std::cout << "Key: " << pair.first << ", Value: " << pair.second << std::endl;
+        modifiedCode = modifyDafnyCode(modifiedCode, "var idx" + pair.first + " := ", pair.second);
+    }
+  writeFile("modified_output.dfy", modifiedCode);
+  std::cout << "Modified Dafny code written to: modified_output.dfy" << std::endl;
   return 0;
 }

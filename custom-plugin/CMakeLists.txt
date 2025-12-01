@@ -7,10 +7,11 @@ find_package(LLVM REQUIRED CONFIG)
 
 # Include Clang's header files
 include_directories(${CLANG_INCLUDE_DIRS})
+include_directories("include/")
 add_definitions(${CLANG_DEFINITIONS})
 
 # add_library(assertion_plugin MODULE plugin.cpp)
-add_executable(assertion_plugin plugin.cpp)
+add_executable(assertion_plugin src/plugin.cpp src/dafny.cpp)
 
 # Link against Clang's libraries
 target_link_libraries(assertion_plugin PRIVATE
