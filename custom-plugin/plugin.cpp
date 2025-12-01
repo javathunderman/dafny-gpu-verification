@@ -16,21 +16,35 @@
 
 using namespace clang;
 using namespace clang::tooling;
-
 static llvm::cl::OptionCategory MyToolCategory("my-tool options");
 
 class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
  public:
   explicit AssertionVisitor(ASTContext *Context) : context(Context) {}
+  std::unordered_map<std::string, clang::Expr*> lexical_map;
   bool VisitStmt(Stmt *stmt) {
-        // stmt->printPretty(llvm::outs(),
-        //                   nullptr,
-        //                   context->getPrintingPolicy());
+        #ifdef DEBUG_PLUGIN
+        stmt->printPretty(llvm::outs(),
+                          nullptr,
+                          context->getPrintingPolicy());
+        #endif
+        return true; 
+    }
+    bool VisitVarDecl(VarDecl *VD) {
+        // Check if the variable is defined (not just declared)
+        if (context->getSourceManager().getFileID(VD->getLocation()) == context->getSourceManager().getMainFileID() && VD->hasDefinition() && VD->getType().getAsString() == "dim3") {
+            llvm::outs() << "Variable defined: " << VD->getNameAsString() << "\n";
+            llvm::outs() << "Definition located at: "
+                        << VD->getLocation().printToString(context->getSourceManager())
+                        << "\n";
+            lexical_map[VD->getNameAsString()] = VD->getInit();
+        } else if (context->getSourceManager)
         return true;
     }
     bool VisitCallExpr(CallExpr *CE) {
         // Check if the expression is a kernel launch pattern
         if (CE->getNumArgs() >= 2) {
+            SourceManager &SM = context->getSourceManager();
             Expr *FirstArg = CE->getArg(0);
             Expr *SecondArg = CE->getArg(1);
             if (FirstArg->getType().getAsString() == "dim3" && 
@@ -38,19 +52,38 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                 
                 llvm::outs() << "Found CUDA kernel launch: "
                              << CE->getDirectCallee()->getNameInfo().getAsString() << "\n";
+                
                 SourceRange range = FirstArg->getSourceRange();
                 if (range.isValid()) {
-                    SourceManager &SM = context->getSourceManager();
                     llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range), SM, context->getLangOpts());
-                    llvm::outs() << "First Expression: " << text << "\n";
+                    std::string stdStr(text.begin(), text.end());
+                    if (lexical_map[stdStr]) {
+                        llvm::outs() << "Grid dimensions are ";
+                        lexical_map[stdStr]->printPretty(llvm::outs(),
+                            nullptr,
+                            context->getPrintingPolicy());
+                        llvm::outs() << "\n";
+                    }
                 }
                 SourceRange range2 = SecondArg->getSourceRange();
                 if (range2.isValid()) {
-                    SourceManager &SM = context->getSourceManager();
                     llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range2), SM, context->getLangOpts());
-                    llvm::outs() << "Second Expression: " << text << "\n";
+                    std::string stdStr(text.begin(), text.end());
+                    if (lexical_map[stdStr]) {
+                        llvm::outs() << "Block dimensions are ";
+                        lexical_map[stdStr]->printPretty(llvm::outs(),
+                            nullptr,
+                            context->getPrintingPolicy());
+                        llvm::outs() << "\n";
+                    }
                 }
             }
+        }
+        return true;
+    }
+    bool VisitFunctionDecl(FunctionDecl *f) {
+        if (f->hasAttr<CUDAGlobalAttr>()) {
+            llvm::outs() << "Found kernel function: " << f->getNameInfo().getName().getAsString() << "\n";
         }
         return true;
     }
