@@ -5,8 +5,7 @@
 // ---------------- CUDA KERNEL ----------------
 // y[i] = sum_{j=0..K-1} x[i + j] * h[j]
 // "valid" convolution: i = 0 .. N-K
-__global__
-void conv1d_valid(const float* x, const float* h,
+__global__ void conv1d_valid(const float* x, const float* h,
                   float* y, int N, int K)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
