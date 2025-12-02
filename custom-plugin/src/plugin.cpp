@@ -19,7 +19,7 @@ using namespace clang::tooling;
 static llvm::cl::OptionCategory MyToolCategory("my-tool options");
 // using ExprVariant = std::variant<clang::ImplicitCastExpr*, clang::BinaryOperator*>;
 std::unordered_map<std::string, std::string> ind_constraints;
-
+std::vector<std::string> comment_reqs;
 class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
  public:
   explicit AssertionVisitor(ASTContext *Context) : context(Context) {}
@@ -50,7 +50,9 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                 DeclContext *parentContext = VD->getDeclContext();
                 if (clang::FunctionDecl *funcDecl = llvm::dyn_cast<clang::FunctionDecl>(parentContext)) {
                     if (kernel_map[funcDecl->getNameAsString()]) {
+                        #ifdef DEBUG_VAR_LOC
                         llvm::outs() << "Belongs to a kernel function " << funcDecl->getNameAsString() << " " << VD->getNameAsString() << "\n";
+                        #endif
                         kernel_vars[VD->getNameAsString()] = VD;
                     }
                 }
@@ -165,7 +167,7 @@ class AssertionConsumer : public clang::ASTConsumer {
                 clang::RawComment* comment = it->second;
                 std::string source = comment->getFormattedText(context.getSourceManager(),
                     context.getDiagnostics());
-                llvm::outs() << source << "\n";
+                comment_reqs.push_back(source);
             }
         }
     }
@@ -198,9 +200,25 @@ int main(int argc, const char **argv) {
   std::string dafnyCode = readFile("test_matmul.dfy");
   std::string modifiedCode = dafnyCode;
   for (const auto& pair : ind_constraints) {
-        std::cout << "Key: " << pair.first << ", Value: " << pair.second << std::endl;
-        modifiedCode = modifyDafnyCode(modifiedCode, "var idx" + pair.first + " := ", pair.second);
+    modifiedCode = modifyDafnyCode(modifiedCode, "var idx" + pair.first + " := ", ";", pair.second, true);
+  }
+  for (std::string item : comment_reqs) {
+    if (item.find("requires") != std::string::npos) {
+      modifiedCode = modifyDafnyCode(modifiedCode, ")", "requires", item, false);
+    } else if (item.find("=") != std::string::npos) {
+      size_t pos = item.find("=");
+
+      std::string prefix = "var " + item.substr(0, pos) + ":= ";
+      std::cout << "found var to replace " << prefix << std::endl;
+      size_t pos2 = modifiedCode.find(prefix);
+      size_t methodEnd = modifiedCode.find(";", pos2);
+      if (pos2 != std::string::npos) {
+        modifiedCode.replace(pos2 + prefix.length(), methodEnd - (pos2 + prefix.length()), item.substr(pos + 1));
+      } else {
+        std::cout << "did not replace anything " << std::endl;
+      }
     }
+  }
   writeFile("modified_output.dfy", modifiedCode);
   std::cout << "Modified Dafny code written to: modified_output.dfy" << std::endl;
   return 0;
