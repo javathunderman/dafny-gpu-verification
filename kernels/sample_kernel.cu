@@ -23,7 +23,7 @@ __global__ void matMulKernel(float* A, float* B, float* C, int n) {
         for (int k = 0; k < n; k++) {
             sum += A[row * n + k] * B[k * n + col];
         }
-        C[2 * row * n + col] = sum;
+        C[row * n + col] = sum;
     }
 }
 
