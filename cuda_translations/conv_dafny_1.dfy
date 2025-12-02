@@ -1,72 +1,104 @@
+// Axiomatic lemma for 2D-to-1D linear indexing (like a row-major layout).
+lemma {:axiom} LinearIndex2DBound(row: nat, col: nat, H: nat, W: nat)
+  requires row < H
+  requires col < W
+  ensures row * W + col < H * W
+
 // CUDA:
 // __global__
-// void conv1d_valid(const float* x, const float* h,
-//                   float* y, int N, int K)
-// {
-method conv1d_valid_thread(
-    x: array<real>, h: array<real>, y: array<real>,
-    N: nat, K: nat,
-    blockIdx_x: nat, blockDim_x: nat, threadIdx_x: nat
+// void conv2d_valid(const float* img,
+//                   const float* filt,
+//                   float* out,
+//                   int H, int W,
+//                   int KH, int KW)
+method conv2d_valid_thread(
+    img: array<int>,
+    filt: array<int>,
+    out: array<int>,
+    H: nat, W: nat,     // image height, width
+    KH: nat, KW: nat,   // kernel height, width
+    blockIdx_x: nat, blockIdx_y: nat,
+    blockDim_x: nat, blockDim_y: nat,
+    threadIdx_x: nat, threadIdx_y: nat
 )
-  // Arrays allocated in host code
-  requires x != null && h != null && y != null
-  requires x.Length == N
-  requires h.Length >= K          // at least K elements (filter)
-  requires N >= K                 // so N - K + 1 is non-negative
-  requires y.Length >= N - K + 1  // at least outSize elements
+  // Arrays must exist
+  requires img != null && filt != null && out != null
 
-  // Bounds on CUDA thread/block indices
-  requires blockDim_x > 0
+  // Image and filter sizes
+  requires H > 0 && W > 0
+  requires KH > 0 && KW > 0
+  requires H >= KH && W >= KW
+
+  // Flattened sizes
+  requires img.Length == H * W
+  requires filt.Length == KH * KW
+
+  // Output size (valid conv)
+  // out has size (H-KH+1) * (W-KW+1)
+  requires out.Length == (H - KH + 1) * (W - KW + 1)
+
+  // Bounds on CUDA block and thread indices
+  requires blockDim_x > 0 && blockDim_y > 0
   requires threadIdx_x < blockDim_x
-  // You can optionally bound blockIdx_x too, but it's not needed
-  // for memory safety as long as we don't *assume* anything about i.
-  modifies y
+  requires threadIdx_y < blockDim_y
+
+  modifies out
 {
-  // CUDA: int i = blockIdx.x * blockDim.x + threadIdx.x;
-  var i: nat := blockIdx_x * blockDim_x + threadIdx_x;
+  // CUDA:     int outH = H - KH + 1;
+  // CUDA:     int outW = W - KW + 1;
+  var outH: nat := H - KH + 1;
+  var outW: nat := W - KW + 1;
 
-  // CUDA: int outSize = N - K + 1;
-  var outSize: nat := N - K + 1;
+  // CUDA:     int outRow = blockIdx.y * blockDim.y + threadIdx.y;
+  // CUDA:     int outCol = blockIdx.x * blockDim.x + threadIdx.x;
+  var outRow: nat := blockIdx_y * blockDim_y + threadIdx_y;
+  var outCol: nat := blockIdx_x * blockDim_x + threadIdx_x;
 
-  // CUDA:
-  // if (i < outSize) {
-  if i < outSize {
-    // Single assert that, together with the preconditions and guard,
-    // guarantees all array accesses are within bounds:
-    //
-    //  - x[i + j]: j ranges 0 .. K-1, so need i + K - 1 < N == x.Length
-    //  - h[j]: j < K <= h.Length
-    //  - y[i]: i < outSize <= y.Length
-    // assert
-    //   0 <= i
-    //   && i + K - 1 < N
-    //   && K <= h.Length
-    //   && outSize <= y.Length;
+  // CUDA:     if (outRow < outH && outCol < outW) {
+  if outRow < outH && outCol < outW {
 
-    // CUDA: float acc = 0.0f;
-    var acc: real := 0.0;
+    var acc: int := 0;
 
-    // CUDA: for (int j = 0; j < K; ++j) {
-    var j: nat := 0;
-    while j < K
-      invariant 0 <= j <= K
-    //   invariant i < outSize ==> 0 <= i //<- can't use bc diff to extract
-      // The assert above, plus these invariants, ensures:
-      //  - 0 <= i + j <= i + K - 1 < N  (safe for x[i + j])
-      //  - 0 <= j < K <= h.Length       (safe for h[j])
+
+    var kr: nat := 0;
+    while kr < KH
+      invariant 0 <= kr <= KH
     {
-      // CUDA:     acc += x[i + j] * h[j];
-      assert(i+j<x.Length);
-      assert(j<h.Length);
-      acc := acc + x[i + j] * h[j];
+      var kc: nat := 0;
+      while kc < KW
+        invariant 0 <= kc <= KW
+      {
 
-      // CUDA: }
-      j := j + 1;
+        var inRow: nat := outRow + kr;
+        var inCol: nat := outCol + kc;
+
+
+        //assert(inRow * W + inCol < H*W);
+        //doesn't assert? replace vars (non pure inputs)
+
+        // assert((outRow + kr) * W + inCol < H*W);
+        //doesn't assert? replace vars (non pure inputs)
+        
+        // assert((outRow + kr) * W + (outCol + kc) < H*W);
+        //doesn't assert? replace vars (non pure inputs)
+        
+        // assert(((outH-1) + kr) * W + ((outW-1) + kc) < H*W);
+        //doesn't assert? reaplace using control fl heuristic (if outRow < outH && outCol < outW {...)
+        
+        // assert((((H - KH + 1)-1) + kr) * W + (((W - KW + 1)-1) + kc) < H*W);
+        //doesn't assert? replace using control flow heuristic
+          //while kr < KH...
+          //while kc < KW
+        
+        assert((((H - KH + 1)-1) + (KH-1)) * W + (((W - KW + 1)-1) + (KW-1)) < H*W);
+        //var imgVal: int := img[inRow * W + inCol];
+
+        kc := kc + 1;
+      }
+
+      kr := kr + 1;
     }
 
-    // CUDA:     y[i] = acc;
-    assert(i<y.Length);
-    y[i] := acc;
   }
-  // CUDA: }
+
 }
