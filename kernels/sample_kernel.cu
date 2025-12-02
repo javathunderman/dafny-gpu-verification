@@ -23,13 +23,19 @@ __global__ void matMulKernel(float* A, float* B, float* C, int n) {
         for (int k = 0; k < n; k++) {
             sum += A[row * n + k] * B[k * n + col];
         }
-        C[row * n + col] = sum;
+        C[2 * row * n + col] = sum;
     }
 }
 
 int main() {
     /** requires M == N */
     /** requires K == N */
+    /** requires N == 4 */
+    /** requires blockDim_x == 16 */
+    /** requires gridDim_x == 4 */
+    /** requires blockDim_y == 16 */
+    /** requires gridDim_y == 4 */
+
     int size = N * N * sizeof(float);
 
     // Allocate host memory

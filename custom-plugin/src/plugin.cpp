@@ -200,23 +200,24 @@ int main(int argc, const char **argv) {
   std::string dafnyCode = readFile("test_matmul.dfy");
   std::string modifiedCode = dafnyCode;
   for (const auto& pair : ind_constraints) {
+    std::cout << "writing new indexing constraint" << std::endl;
     modifiedCode = modifyDafnyCode(modifiedCode, "var idx" + pair.first + " := ", ";", pair.second, true);
   }
   for (std::string item : comment_reqs) {
     if (item.find("requires") != std::string::npos) {
       modifiedCode = modifyDafnyCode(modifiedCode, ")", "requires", item, false);
     } else if (item.find("=") != std::string::npos) {
-      size_t pos = item.find("=");
+    //   size_t pos = item.find("=");
 
-      std::string prefix = "var " + item.substr(0, pos) + ":= ";
-      std::cout << "found var to replace " << prefix << std::endl;
-      size_t pos2 = modifiedCode.find(prefix);
-      size_t methodEnd = modifiedCode.find(";", pos2);
-      if (pos2 != std::string::npos) {
-        modifiedCode.replace(pos2 + prefix.length(), methodEnd - (pos2 + prefix.length()), item.substr(pos + 1));
-      } else {
-        std::cout << "did not replace anything " << std::endl;
-      }
+    //   std::string prefix = "var " + item.substr(0, pos) + ":= ";
+    //   std::cout << "found var to replace " << prefix << std::endl;
+    //   size_t pos2 = modifiedCode.find(prefix);
+    //   size_t methodEnd = modifiedCode.find(";", pos2);
+    //   if (pos2 != std::string::npos) {
+    //     modifiedCode.replace(pos2 + prefix.length(), methodEnd - (pos2 + prefix.length()), item.substr(pos + 1));
+    //   } else {
+    //     std::cout << "did not replace anything " << std::endl;
+    //   }
     }
   }
   writeFile("modified_output.dfy", modifiedCode);
