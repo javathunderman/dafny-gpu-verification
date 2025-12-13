@@ -73,6 +73,7 @@ method conv2d_valid_thread(
         var inCol: nat := outCol + kc;
 
 
+        // --- apply trick    ---
         //assert(inRow * W + inCol < H*W);
         //doesn't assert? replace vars (non pure inputs)
 
