@@ -52,7 +52,8 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
             } else if (VD->getType()->isIntegerType()) {
                 DeclContext *parentContext = VD->getDeclContext();
                 if (clang::FunctionDecl *funcDecl = llvm::dyn_cast<clang::FunctionDecl>(parentContext)) {
-                    if (kernel_map[funcDecl->getNameAsString()]) {
+                    auto lookup = kernel_map.find(funcDecl->getNameAsString());
+                    if (lookup != kernel_map.end()) {
                         #ifdef DEBUG_VAR_LOC
                         llvm::outs() << "Belongs to a kernel function " << funcDecl->getNameAsString() << " " << VD->getNameAsString() << "\n";
                         #endif
@@ -67,7 +68,8 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
     bool VisitArraySubscriptExpr(clang::ArraySubscriptExpr *arrSubExpr) {
         Expr *indexExpr = arrSubExpr->getIdx();
         Expr *baseExpr = arrSubExpr->getBase();
-        if (kernel_map[curr_func->getNameInfo().getName().getAsString()]) {
+        auto lookup = kernel_map.find(curr_func->getNameInfo().getName().getAsString());
+        if (lookup != kernel_map.end()) {
             if (clang::ImplicitCastExpr *baseExprI = llvm::dyn_cast<clang::ImplicitCastExpr>(baseExpr)) {
                 #ifdef DEBUG_ARR_SUBSCRIPT
                 baseExprI->getSubExprAsWritten()->printPretty(llvm::outs(),
@@ -148,6 +150,19 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                     }
                 }
             }
+            if (CE->getDirectCallee()) {
+                std::string funcName = CE->getDirectCallee()->getNameAsString();
+                auto it = kernel_map.find(funcName);
+                if (it != kernel_map.end()) {
+                    for (int i = 0; i < CE->getNumArgs(); i++) {
+                        SourceRange range = CE->getArg(i)->getSourceRange();
+                        llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range), SM, context->getLangOpts());
+                        std::string stdStr(text.begin(), text.end());
+                        llvm::outs() << "    arg: " << stdStr << "\n";
+                        handleArgumentExpression(CE->getArg(i));
+                    }
+                }
+            }
         }
         return true;
     }
@@ -155,11 +170,39 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
         curr_func = f;
         if (f->hasAttr<CUDAGlobalAttr>()) {
             kernel_map[f->getNameInfo().getName().getAsString()] = f;
+            llvm::outs() << "adding global function " << f->getNameInfo().getName().getAsString();
         }
         return true;
     }
  private:
   ASTContext *context;
+  void handleArgumentExpression(const clang::Expr *E) {
+    E = E->IgnoreCasts(); 
+    if (const auto *DefaultArg = clang::dyn_cast<clang::CXXDefaultArgExpr>(E)) {
+        E = DefaultArg->getExpr(); 
+        E = E->IgnoreCasts(); 
+        llvm::outs() << "  -> Argument resolved from CXXDefaultArgExpr.\n";
+    }
+
+    if (const auto *Literal = clang::dyn_cast<clang::IntegerLiteral>(E)) {
+        llvm::APInt Value = Literal->getValue();
+        llvm::SmallString<20> StringValue;
+        bool isSigned = Literal->getType()->isSignedIntegerType();
+        Value.toString(StringValue, 10, isSigned); 
+
+        llvm::outs() << "  -> Argument is Integer Literal: " 
+                     << StringValue << "\n";
+        
+    } else if (const auto *DRE = clang::dyn_cast<clang::DeclRefExpr>(E)) {
+        if (const auto *VarDecl = clang::dyn_cast<clang::VarDecl>(DRE->getDecl())) {
+            llvm::outs() << "  -> Argument is Variable: " << VarDecl->getName() << "\n";
+        }
+        
+    } else {
+        llvm::outs() << "  -> Argument is Complex Expression (Type: " 
+                     << E->getStmtClassName() << ")\n";
+    }
+}
 };
 
 class AssertionConsumer : public clang::ASTConsumer {
