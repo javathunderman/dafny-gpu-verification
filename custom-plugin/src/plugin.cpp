@@ -20,7 +20,7 @@
 using namespace clang;
 using namespace clang::tooling;
 static llvm::cl::OptionCategory MyToolCategory("my-tool options");
-// using ExprVariant = std::variant<clang::ImplicitCastExpr*, clang::BinaryOperator*>;
+using ArgValue = std::variant<const clang::VarDecl*, const clang::IntegerLiteral*>;
 std::unordered_map<std::string, std::string> ind_constraints;
 std::vector<std::string> comment_reqs;
 class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
@@ -28,7 +28,7 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
   explicit AssertionVisitor(ASTContext *Context) : context(Context) {}
   std::unordered_map<std::string, clang::Expr*> lexical_map;
   std::unordered_map<std::string, clang::FunctionDecl *> kernel_map;
-  std::unordered_map<std::string, clang::VarDecl*> kernel_vars;
+  std::unordered_map<std::string, ArgValue> kernel_vars;
   FunctionDecl *curr_func;
   bool VisitStmt(Stmt *stmt) {
         #ifdef DEBUG_STMT
@@ -47,6 +47,8 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                 llvm::outs() << "Definition located at: "
                             << VD->getLocation().printToString(context->getSourceManager())
                             << "\n";
+                VD->getInit()->printPretty(llvm::outs(), nullptr, context->getPrintingPolicy());
+                llvm::outs() << "\n";
                 #endif
                 lexical_map[VD->getNameAsString()] = VD->getInit();
             } else if (VD->getType()->isIntegerType()) {
@@ -159,7 +161,7 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                         llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range), SM, context->getLangOpts());
                         std::string stdStr(text.begin(), text.end());
                         llvm::outs() << "    arg: " << stdStr << "\n";
-                        handleArgumentExpression(CE->getArg(i));
+                        handleArgumentExpression(CE->getArg(i), CE->getDirectCallee()->getParamDecl(i), stdStr);
                     }
                 }
             }
@@ -176,7 +178,7 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
     }
  private:
   ASTContext *context;
-  void handleArgumentExpression(const clang::Expr *E) {
+  void handleArgumentExpression(const clang::Expr *E, ParmVarDecl *p, std::string varName) {
     E = E->IgnoreCasts(); 
     if (const auto *DefaultArg = clang::dyn_cast<clang::CXXDefaultArgExpr>(E)) {
         E = DefaultArg->getExpr(); 
@@ -192,10 +194,12 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
 
         llvm::outs() << "  -> Argument is Integer Literal: " 
                      << StringValue << "\n";
+        kernel_vars[varName] = Literal;
         
     } else if (const auto *DRE = clang::dyn_cast<clang::DeclRefExpr>(E)) {
         if (const auto *VarDecl = clang::dyn_cast<clang::VarDecl>(DRE->getDecl())) {
-            llvm::outs() << "  -> Argument is Variable: " << VarDecl->getName() << "\n";
+            llvm::outs() << "  -> Argument is Variable: " << varName << "\n";
+            kernel_vars[varName] = VarDecl;
         }
         
     } else {
