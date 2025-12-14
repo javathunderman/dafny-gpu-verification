@@ -13,7 +13,10 @@
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/CommandLine.h"
 #include "clang/AST/RawCommentList.h"
+#include "clang/Analysis/Analyses/Dominators.h"
 #include "../include/dafny.hpp"
+#define DEBUG_ARR_SUBSCRIPT
+#define DEBUG_VAR_LOC
 using namespace clang;
 using namespace clang::tooling;
 static llvm::cl::OptionCategory MyToolCategory("my-tool options");
@@ -66,21 +69,23 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
         Expr *baseExpr = arrSubExpr->getBase();
         if (kernel_map[curr_func->getNameInfo().getName().getAsString()]) {
             if (clang::ImplicitCastExpr *baseExprI = llvm::dyn_cast<clang::ImplicitCastExpr>(baseExpr)) {
-                // baseExprI->getSubExprAsWritten()->printPretty(llvm::outs(),
-                //                 nullptr,
-                //                 context->getPrintingPolicy());
-                // llvm::outs() << "\n" << baseExprI->getSubExprAsWritten()->getStmtClassName() << "\nAttempt to print the parent, then indexExpr\n";
+                #ifdef DEBUG_ARR_SUBSCRIPT
+                baseExprI->getSubExprAsWritten()->printPretty(llvm::outs(),
+                                nullptr,
+                                context->getPrintingPolicy());
+                llvm::outs() << "\n";
+                #endif
                 SourceRange range_base = baseExprI->getSubExprAsWritten()->getSourceRange();
                 SourceManager &SM = context->getSourceManager();
                 llvm::StringRef base_text_ref = Lexer::getSourceText(CharSourceRange::getTokenRange(range_base), SM, context->getLangOpts());
                 std::string base_text(base_text_ref.begin(), base_text_ref.end());
                 if (clang::ImplicitCastExpr *indexExprI = llvm::dyn_cast<clang::ImplicitCastExpr>(indexExpr)) {
                     #ifdef DEBUG_ARR_SUBSCRIPT
+                    indexExprI->getSubExprAsWritten()->printPretty(llvm::outs(),
+                                nullptr,
+                                context->getPrintingPolicy());
                     llvm::outs()<< "Implicit cast expr for array subscript\n";
                     #endif
-                    // indexExprI->getSubExprAsWritten()->printPretty(llvm::outs(),
-                    //             nullptr,
-                    //             context->getPrintingPolicy());
                     SourceRange range_ind = indexExprI->getSubExprAsWritten()->getSourceRange();
                     llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range_ind), SM, context->getLangOpts());
                     std::string stdStr(text.begin(), text.end());
@@ -88,11 +93,15 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
 
                 } else if (clang::BinaryOperator *indexExprB = llvm::dyn_cast<clang::BinaryOperator>(indexExpr)) {
                     #ifdef DEBUG_ARR_SUBSCRIPT
-                    llvm::outs()<< "BinOp for array subscript\n";
+                    indexExprB->printPretty(llvm::outs(),
+                                nullptr,
+                                context->getPrintingPolicy());
+                    llvm::outs()<< "\nBinOp for array subscript\nLHS\n";
+                    indexExprB->getLHS()->printPretty(llvm::outs(), nullptr, context->getPrintingPolicy());
+                    llvm::outs() << "\nRHS\n";
+                    indexExprB->getRHS()->printPretty(llvm::outs(), nullptr, context->getPrintingPolicy());
+                    llvm::outs() << "\n";
                     #endif
-                    // indexExprB->printPretty(llvm::outs(),
-                    //             nullptr,
-                    //             context->getPrintingPolicy());
                     SourceRange range_ind = indexExprB->getSourceRange();
                     llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range_ind), SM, context->getLangOpts());
                     std::string stdStr(text.begin(), text.end());
@@ -110,10 +119,10 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
             Expr *SecondArg = CE->getArg(1);
             if (FirstArg->getType().getAsString() == "dim3" && 
                 SecondArg->getType().getAsString() == "dim3") {
-                
-                // llvm::outs() << "Found CUDA kernel launch: "
-                //              << CE->getDirectCallee()->getNameInfo().getAsString() << "\n";
-                
+                #ifdef DEBUG_CALLS
+                llvm::outs() << "Found CUDA kernel launch: "
+                             << CE->getDirectCallee()->getNameInfo().getAsString() << "\n";
+                #endif
                 SourceRange range = FirstArg->getSourceRange();
                 if (range.isValid()) {
                     llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range), SM, context->getLangOpts());
