@@ -4,6 +4,7 @@
 #include <iostream>
 #include <memory>
 #include <vector>
+#include <sstream>
 
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/RecursiveASTVisitor.h"
@@ -15,6 +16,7 @@
 #include "clang/AST/RawCommentList.h"
 #include "clang/Analysis/Analyses/Dominators.h"
 #include "clang/Rewrite/Core/Rewriter.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "../include/dafny.hpp"
 #define DEBUG_ARR_SUBSCRIPT
@@ -29,6 +31,8 @@ std::unordered_map<std::string, clang::Expr*> lexical_map;
 std::unordered_map<std::string, clang::FunctionDecl *> kernel_map;
 std::unordered_map<std::string, ArgValue> kernel_vars;
 std::vector<ArraySubscriptExpr*> rewrite_ind;
+std::vector<std::string> blockDim(3, "1");
+std::vector<std::string> gridDim(3, "1");;
 class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
  public:
   explicit AssertionVisitor(ASTContext *Context) : context(Context) {}
@@ -135,11 +139,27 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                 if (range.isValid()) {
                     llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range), SM, context->getLangOpts());
                     std::string stdStr(text.begin(), text.end());
-                    if (lexical_map[stdStr]) {
+                    auto it = lexical_map.find(stdStr);
+                    if (it != lexical_map.end()) {
                         llvm::outs() << "Grid dimensions are ";
                         lexical_map[stdStr]->printPretty(llvm::outs(),
                             nullptr,
                             context->getPrintingPolicy());
+                        llvm::outs() << "\n";
+                        std::string gridString;
+
+                        llvm::raw_string_ostream gridInit(gridString);
+                        lexical_map[stdStr]->printPretty(gridInit, nullptr, context->getPrintingPolicy());
+                        
+                        std::stringstream ss(gridString);
+                        std::string token;
+                        size_t idx = 0;
+                        while (std::getline(ss, token, ',') && idx < gridDim.size()) {
+                            std::string clean_tok = token;
+                            std::replace(clean_tok.begin(), clean_tok.end(), '.', '_');;
+                            gridDim[idx++] = clean_tok;
+                            llvm::outs() << clean_tok << " ";
+                        }
                         llvm::outs() << "\n";
                     }
                 }
@@ -147,11 +167,26 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                 if (range2.isValid()) {
                     llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range2), SM, context->getLangOpts());
                     std::string stdStr(text.begin(), text.end());
-                    if (lexical_map[stdStr]) {
+                    auto it = lexical_map.find(stdStr);
+                    if (it != lexical_map.end()) {
                         llvm::outs() << "Block dimensions are ";
                         lexical_map[stdStr]->printPretty(llvm::outs(),
                             nullptr,
                             context->getPrintingPolicy());
+                        llvm::outs() << "\n";
+
+                        std::string blockString;
+
+                        llvm::raw_string_ostream blockInit(blockString);
+                        lexical_map[stdStr]->printPretty(blockInit, nullptr, context->getPrintingPolicy());
+                        
+                        std::stringstream ss(blockString);
+                        std::string token;
+                        size_t idx = 0;
+                        while (std::getline(ss, token, ',') && idx < blockDim.size()) {
+                            blockDim[idx++] = token;
+                            llvm::outs() << token << " ";
+                        }
                         llvm::outs() << "\n";
                     }
                 }
