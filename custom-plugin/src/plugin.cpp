@@ -19,12 +19,15 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "../include/dafny.hpp"
-#define DEBUG_ARR_SUBSCRIPT
-#define DEBUG_VAR_LOC
+
 using namespace clang;
 using namespace clang::tooling;
 static llvm::cl::OptionCategory MyToolCategory("my-tool options");
+static llvm::cl::opt<std::string> OutputFile("o", llvm::cl::desc("Specify the output file"), llvm::cl::value_desc("filename"), llvm::cl::cat(MyToolCategory));
+static llvm::cl::opt<std::string> TemplateFile("t", llvm::cl::desc("Specify the Dafny template"), llvm::cl::value_desc("template_file"), llvm::cl::cat(MyToolCategory));
+
 using ArgValue = std::variant<const clang::VarDecl*, const clang::IntegerLiteral*>;
+
 std::unordered_map<std::string, std::string> ind_constraints;
 std::vector<std::string> comment_reqs;
 std::unordered_map<std::string, clang::Expr*> lexical_map;
@@ -32,7 +35,9 @@ std::unordered_map<std::string, clang::FunctionDecl *> kernel_map;
 std::unordered_map<std::string, ArgValue> kernel_vars;
 std::vector<ArraySubscriptExpr*> rewrite_ind;
 std::vector<std::string> blockDim(3, "1");
-std::vector<std::string> gridDim(3, "1");;
+std::vector<std::string> gridDim(3, "1");
+
+
 class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
  public:
   explicit AssertionVisitor(ASTContext *Context) : context(Context) {}
@@ -46,7 +51,6 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
         return true; 
     }
     bool VisitVarDecl(VarDecl *VD) {
-        // Check if the variable is defined (not just declared)
         if (context->getSourceManager().getFileID(VD->getLocation()) == context->getSourceManager().getMainFileID() && VD->hasDefinition()) {
             if (VD->getType().getAsString() == "dim3") {
                 #ifdef DEBUG_VAR_LOC
@@ -141,11 +145,13 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                     std::string stdStr(text.begin(), text.end());
                     auto it = lexical_map.find(stdStr);
                     if (it != lexical_map.end()) {
+                        #ifdef DEBUG_CALLS
                         llvm::outs() << "Grid dimensions are ";
                         lexical_map[stdStr]->printPretty(llvm::outs(),
                             nullptr,
                             context->getPrintingPolicy());
                         llvm::outs() << "\n";
+                        #endif
                         std::string gridString;
 
                         llvm::raw_string_ostream gridInit(gridString);
@@ -158,7 +164,9 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                             std::string clean_tok = token;
                             std::replace(clean_tok.begin(), clean_tok.end(), '.', '_');;
                             gridDim[idx++] = clean_tok;
+                            #ifdef DEBUG_CALLS
                             llvm::outs() << clean_tok << " ";
+                            #endif
                         }
                         llvm::outs() << "\n";
                     }
@@ -169,11 +177,13 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                     std::string stdStr(text.begin(), text.end());
                     auto it = lexical_map.find(stdStr);
                     if (it != lexical_map.end()) {
+                        #ifdef DEBUG_CALLS
                         llvm::outs() << "Block dimensions are ";
                         lexical_map[stdStr]->printPretty(llvm::outs(),
                             nullptr,
                             context->getPrintingPolicy());
                         llvm::outs() << "\n";
+                        #endif
 
                         std::string blockString;
 
@@ -185,7 +195,9 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                         size_t idx = 0;
                         while (std::getline(ss, token, ',') && idx < blockDim.size()) {
                             blockDim[idx++] = token;
+                            #ifdef DEBUG_CALLS
                             llvm::outs() << token << " ";
+                            #endif
                         }
                         llvm::outs() << "\n";
                     }
@@ -199,7 +211,9 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                         SourceRange range = CE->getArg(i)->getSourceRange();
                         llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range), SM, context->getLangOpts());
                         std::string stdStr(text.begin(), text.end());
+                        #ifdef DEBUG_CALLS
                         llvm::outs() << "    arg: " << stdStr << "\n";
+                        #endif
                         handleArgumentExpression(CE->getArg(i), CE->getDirectCallee()->getParamDecl(i));
                     }
                 }
@@ -211,7 +225,9 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
         curr_func = f;
         if (f->hasAttr<CUDAGlobalAttr>()) {
             kernel_map[f->getNameInfo().getName().getAsString()] = f;
+            #ifdef DEBUG_FUNC_DECL
             llvm::outs() << "adding global function " << f->getNameInfo().getName().getAsString();
+            #endif
         }
         return true;
     }
@@ -221,7 +237,9 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
     if (const auto *DefaultArg = clang::dyn_cast<clang::CXXDefaultArgExpr>(E)) {
         E = DefaultArg->getExpr(); 
         E = E->IgnoreCasts(); 
+        #ifdef DEBUG_ARG
         llvm::outs() << "  -> Argument resolved from CXXDefaultArgExpr.\n";
+        #endif
     }
 
     if (const auto *Literal = clang::dyn_cast<clang::IntegerLiteral>(E)) {
@@ -229,20 +247,26 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
         llvm::SmallString<20> StringValue;
         bool isSigned = Literal->getType()->isSignedIntegerType();
         Value.toString(StringValue, 10, isSigned); 
-
+        
+        #ifdef DEBUG_ARG
         llvm::outs() << "  -> Argument is Integer Literal: " 
                      << p->getNameAsString() << " " << StringValue << "\n";
+        #endif
         kernel_vars[p->getNameAsString()] = Literal;
         
     } else if (const auto *DRE = clang::dyn_cast<clang::DeclRefExpr>(E)) {
         if (const auto *VarDecl = clang::dyn_cast<clang::VarDecl>(DRE->getDecl())) {
+            #ifdef DEBUG_ARG
             llvm::outs() << "  -> Argument is Variable: " << p->getNameAsString() << "\n";
+            #endif
             kernel_vars[p->getNameAsString()] = VarDecl;
         }
         
     } else {
+        #ifdef DEBUG_ARG
         llvm::outs() << "  -> Argument is Complex Expression (Type: " 
                      << E->getStmtClassName() << ")\n";
+        #endif
     }
 }
 void rewriteIfIntegerLiteral(DeclRefExpr* DRE, llvm::APInt &repl, std::string &varName, clang::Rewriter &rewrite) {
@@ -254,7 +278,9 @@ void rewriteIfIntegerLiteral(DeclRefExpr* DRE, llvm::APInt &repl, std::string &v
         if (resolveIL) {
             repl = (*resolveIL)->getValue();
             varName = name;
+            #ifdef DEBUG_REWRITE
             std::cout << "Found integer literal to rewrite with\n";
+            #endif
             rewrite.ReplaceText(DRE->getSourceRange(), std::to_string(repl.getZExtValue()));
         }
     } else {
@@ -307,7 +333,9 @@ void rewriteCollectedSubscripts() {
             clang::CharSourceRange CSR = clang::CharSourceRange::getTokenRange(range_idx);
 
             std::string rewrittenSubscript = rewrite.getRewrittenText(CSR);
+            #ifdef DEBUG_REWRITE
             llvm::outs() << "completed rewrite " << rewrittenSubscript << "\n";
+            #endif
             ind_constraints[base_text] = rewrittenSubscript;
         }
     }
@@ -363,30 +391,18 @@ int main(int argc, const char **argv) {
 
   AssertionFrontendAction action;
   tool.run(newFrontendActionFactory<AssertionFrontendAction>().get());
-  std::string dafnyCode = readFile("test_matmul.dfy");
+  
+  std::string dafnyCode = readFile(TemplateFile);
   std::string modifiedCode = dafnyCode;
   for (const auto& pair : ind_constraints) {
-    std::cout << "writing new indexing constraint" << std::endl;
     modifiedCode = modifyDafnyCode(modifiedCode, "var idx" + pair.first + " := ", ";", pair.second, true);
   }
   for (std::string item : comment_reqs) {
     if (item.find("requires") != std::string::npos) {
       modifiedCode = modifyDafnyCode(modifiedCode, ")", "requires", item, false);
-    } else if (item.find("=") != std::string::npos) {
-    //   size_t pos = item.find("=");
-
-    //   std::string prefix = "var " + item.substr(0, pos) + ":= ";
-    //   std::cout << "found var to replace " << prefix << std::endl;
-    //   size_t pos2 = modifiedCode.find(prefix);
-    //   size_t methodEnd = modifiedCode.find(";", pos2);
-    //   if (pos2 != std::string::npos) {
-    //     modifiedCode.replace(pos2 + prefix.length(), methodEnd - (pos2 + prefix.length()), item.substr(pos + 1));
-    //   } else {
-    //     std::cout << "did not replace anything " << std::endl;
-    //   }
     }
   }
-  writeFile("modified_output.dfy", modifiedCode);
-  std::cout << "Modified Dafny code written to: modified_output.dfy" << std::endl;
+  writeFile(OutputFile, modifiedCode);
+  std::cout << "Modified Dafny code written to: " << OutputFile  <<  std::endl;
   return 0;
 }
