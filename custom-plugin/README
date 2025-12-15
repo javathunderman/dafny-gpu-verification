@@ -1,0 +1,17 @@
+## Clang-based CUDA Memory Static Analysis Tool
+
+### Building
+Prequisites: You must have `clang`, including `clang-dev` and `llvm` installed (these are both installable via `apt`). We used `llvm-18` for development, though any modern release should work. 
+
+`mkdir build`
+
+`cmake ..`
+
+`make`
+
+This will produce a binary named `assertion_plugin`. 
+
+### Usage
+`./assertion_plugin <path to CUDA kernel> -t <path to Dafny template> -o <output Dafny filepath>`
+
+Once the plugin is run, it should attempt to compile your CUDA source file (thereby catching any standard syntax errors), and will produce a Dafny file at the desired location. Within VSCode, Dafny's language support plugin should automatically verify the assertions in the file once the file is opened. 
