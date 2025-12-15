@@ -1,0 +1,9 @@
+### Verification of LLM-generated GPU Kernels
+
+Project for ECE584 at UIUC, fall 2025, by Arjun Vedantham and Alex Lee. 
+
+- cuda_translations: Contains all CUDA source files used for testing, along with crafted Dafny models of these kernels. 
+- custom_plugin: A clang based libtool plugin for automated verification within Dafny. 
+- docs: Writeups/presentations
+- esbmc: Tests with ESBMC, another model checker for GPU programs. Not part of our final project flow. 
+- Other Dafny files: mostly test files from learning Dafny, including how best to model concurrent systems. 
