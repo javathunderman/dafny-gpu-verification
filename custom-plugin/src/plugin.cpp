@@ -14,6 +14,8 @@
 #include "llvm/Support/CommandLine.h"
 #include "clang/AST/RawCommentList.h"
 #include "clang/Analysis/Analyses/Dominators.h"
+#include "clang/Rewrite/Core/Rewriter.h"
+
 #include "../include/dafny.hpp"
 #define DEBUG_ARR_SUBSCRIPT
 #define DEBUG_VAR_LOC
@@ -23,12 +25,13 @@ static llvm::cl::OptionCategory MyToolCategory("my-tool options");
 using ArgValue = std::variant<const clang::VarDecl*, const clang::IntegerLiteral*>;
 std::unordered_map<std::string, std::string> ind_constraints;
 std::vector<std::string> comment_reqs;
+std::unordered_map<std::string, clang::Expr*> lexical_map;
+std::unordered_map<std::string, clang::FunctionDecl *> kernel_map;
+std::unordered_map<std::string, ArgValue> kernel_vars;
+std::vector<ArraySubscriptExpr*> rewrite_ind;
 class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
  public:
   explicit AssertionVisitor(ASTContext *Context) : context(Context) {}
-  std::unordered_map<std::string, clang::Expr*> lexical_map;
-  std::unordered_map<std::string, clang::FunctionDecl *> kernel_map;
-  std::unordered_map<std::string, ArgValue> kernel_vars;
   FunctionDecl *curr_func;
   bool VisitStmt(Stmt *stmt) {
         #ifdef DEBUG_STMT
@@ -112,6 +115,7 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                     ind_constraints[base_text] = stdStr;
                 }
                 llvm::outs() << "\n";
+                rewrite_ind.push_back(arrSubExpr);
             }
         }
         return true;
@@ -161,7 +165,7 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                         llvm::StringRef text = Lexer::getSourceText(CharSourceRange::getTokenRange(range), SM, context->getLangOpts());
                         std::string stdStr(text.begin(), text.end());
                         llvm::outs() << "    arg: " << stdStr << "\n";
-                        handleArgumentExpression(CE->getArg(i), CE->getDirectCallee()->getParamDecl(i), stdStr);
+                        handleArgumentExpression(CE->getArg(i), CE->getDirectCallee()->getParamDecl(i));
                     }
                 }
             }
@@ -176,9 +180,8 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
         }
         return true;
     }
- private:
-  ASTContext *context;
-  void handleArgumentExpression(const clang::Expr *E, ParmVarDecl *p, std::string varName) {
+
+  void handleArgumentExpression(const clang::Expr *E, ParmVarDecl *p) {
     E = E->IgnoreCasts(); 
     if (const auto *DefaultArg = clang::dyn_cast<clang::CXXDefaultArgExpr>(E)) {
         E = DefaultArg->getExpr(); 
@@ -193,13 +196,13 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
         Value.toString(StringValue, 10, isSigned); 
 
         llvm::outs() << "  -> Argument is Integer Literal: " 
-                     << StringValue << "\n";
-        kernel_vars[varName] = Literal;
+                     << p->getNameAsString() << " " << StringValue << "\n";
+        kernel_vars[p->getNameAsString()] = Literal;
         
     } else if (const auto *DRE = clang::dyn_cast<clang::DeclRefExpr>(E)) {
         if (const auto *VarDecl = clang::dyn_cast<clang::VarDecl>(DRE->getDecl())) {
-            llvm::outs() << "  -> Argument is Variable: " << varName << "\n";
-            kernel_vars[varName] = VarDecl;
+            llvm::outs() << "  -> Argument is Variable: " << p->getNameAsString() << "\n";
+            kernel_vars[p->getNameAsString()] = VarDecl;
         }
         
     } else {
@@ -207,7 +210,79 @@ class AssertionVisitor : public RecursiveASTVisitor<AssertionVisitor> {
                      << E->getStmtClassName() << ")\n";
     }
 }
+void rewriteIfIntegerLiteral(DeclRefExpr* DRE, llvm::APInt &repl, std::string &varName, clang::Rewriter &rewrite) {
+    std::string name = DRE->getNameInfo().getAsString();
+    auto it = kernel_vars.find(name);
+
+    if (it != kernel_vars.end()) {
+        auto *resolveIL = std::get_if<const IntegerLiteral *>(&it->second);
+        if (resolveIL) {
+            repl = (*resolveIL)->getValue();
+            varName = name;
+            std::cout << "Found integer literal to rewrite with\n";
+            rewrite.ReplaceText(DRE->getSourceRange(), std::to_string(repl.getZExtValue()));
+        }
+    } else {
+        std::cout << "no attempted rewrite\n";
+    }
+}
+
+void replaceDeclRefs(BinaryOperator* BO, llvm::APInt &repl, std::string &varName, clang::Rewriter &rewrite) {
+    if (!BO) return;
+
+    Expr* LHS = BO->getLHS()->IgnoreParenImpCasts();
+    Expr* RHS = BO->getRHS()->IgnoreParenImpCasts();
+
+    if (BinaryOperator* LHS_BO = dyn_cast<BinaryOperator>(LHS)) {
+        replaceDeclRefs(LHS_BO, repl, varName, rewrite);
+    } else if (DeclRefExpr* LHS_DRE = dyn_cast<DeclRefExpr>(LHS)) {
+        rewriteIfIntegerLiteral(LHS_DRE, repl, varName, rewrite);
+    }
+
+    if (BinaryOperator* RHS_BO = dyn_cast<BinaryOperator>(RHS)) {
+        replaceDeclRefs(RHS_BO, repl, varName, rewrite);
+    } else if (DeclRefExpr* RHS_DRE = dyn_cast<DeclRefExpr>(RHS)) {
+        rewriteIfIntegerLiteral(RHS_DRE, repl, varName, rewrite);
+    }
+}
+
+void rewriteCollectedSubscripts() {
+    clang::Rewriter rewrite;
+    rewrite.setSourceMgr(context->getSourceManager(), context->getLangOpts());
+    for (ArraySubscriptExpr* ASE : rewrite_ind) {
+        Expr* Idx = ASE->getIdx()->IgnoreParenImpCasts();
+        Expr* Base = ASE->getBase()->IgnoreParenImpCasts();
+        llvm::APInt repl(32, 42);
+        std::string varName;
+        if (BinaryOperator* BO = dyn_cast<BinaryOperator>(Idx)) {
+            replaceDeclRefs(BO, repl, varName, rewrite);
+        } else if (DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(Idx)) {
+            rewriteIfIntegerLiteral(DRE, repl, varName, rewrite);
+        }
+        if (DeclRefExpr* BaseDRE = dyn_cast<DeclRefExpr>(Base)) {
+            rewriteIfIntegerLiteral(BaseDRE, repl, varName, rewrite);
+        }
+        if (repl != NULL) {
+            SourceRange range_base = Base->getSourceRange();
+            SourceRange range_idx = Idx->getSourceRange();
+            SourceManager &SM = context->getSourceManager();
+            llvm::StringRef base_text_ref = Lexer::getSourceText(CharSourceRange::getTokenRange(range_base), SM, context->getLangOpts());
+            std::string base_text(base_text_ref.begin(), base_text_ref.end());
+
+            clang::CharSourceRange CSR = clang::CharSourceRange::getTokenRange(range_idx);
+
+            std::string rewrittenSubscript = rewrite.getRewrittenText(CSR);
+            llvm::outs() << "completed rewrite " << rewrittenSubscript << "\n";
+            ind_constraints[base_text] = rewrittenSubscript;
+        }
+    }
+    rewrite_ind.clear();
+}
+private:
+  ASTContext *context;
 };
+
+
 
 class AssertionConsumer : public clang::ASTConsumer {
  public:
@@ -215,9 +290,9 @@ class AssertionConsumer : public clang::ASTConsumer {
 
     virtual void HandleTranslationUnit(clang::ASTContext& context) {
         visitor_.TraverseDecl(context.getTranslationUnitDecl());
+        visitor_.rewriteCollectedSubscripts();
         auto comments = context.Comments.getCommentsInFile(
             context.getSourceManager().getMainFileID());
-        // llvm::outs() << context.Comments.empty() << "\n";
         if (!context.Comments.empty()) {
             for (auto it = comments->begin(); it != comments->end(); it++) {
                 clang::RawComment* comment = it->second;
